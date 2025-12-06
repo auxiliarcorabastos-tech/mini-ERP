@@ -23,6 +23,9 @@ button.primary{background:var(--accent);color:#fff;padding:8px 12px;border:0;bor
 .modal{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.45);z-index:60}
 .modal .card{width:100%;max-width:420px}
 @media(max-width:900px){#sidebar{position:fixed;left:0;top:50px;bottom:0;transform:translateX(-100%);transition:transform .22s;z-index:40}#sidebar.open{transform:translateX(0)}main{padding:12px}}
+.badge{display:inline-block;padding:4px 8px;border-radius:999px;background:#eef2ff;color:#0a57ff;font-weight:600;font-size:12px}
+.actions-row{display:flex;gap:8px;flex-wrap:wrap}
+.item-row{display:flex;gap:8px;align-items:center}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
@@ -169,11 +172,16 @@ button.primary{background:var(--accent);color:#fff;padding:8px 12px;border:0;bor
     <section id="recibos" class="hidden">
       <h2>Pedidos</h2>
       <div class="card">
-        <h3>Crear Pedido</h3>
-        <label>NIT Fundación</label><input id="pd_nit">
+        <h3 id="formTitle">Crear Pedido</h3>
+
+        <label>NIT Fundación</label>
+        <input id="pd_nit" placeholder="NIT">
+
         <div id="pd_fund_info" class="small" style="margin-top:6px"></div>
+
         <label>Fundación (seleccione)</label><select id="pd_fund"></select>
         <label>Punto de Envío</label><select id="pd_point"></select>
+
         <label>Conductor</label><select id="pd_driver"></select>
         <label>Placa</label><select id="pd_plate"></select>
         <label>Peaje</label><input id="pd_peaje" type="number">
@@ -188,13 +196,19 @@ button.primary{background:var(--accent);color:#fff;padding:8px 12px;border:0;bor
         <input id="pd_pack_qty" type="number" placeholder="Cant. Embalaje" value="1">
         <label>Kilos (obligatorio)</label>
         <input id="pd_kilos" type="number" placeholder="Kilos (obligatorio)">
-        <button id="pd_add_item" class="primary" style="margin-bottom:10px">Agregar producto</button>
+
+        <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
+          <button id="pd_add_item" class="primary">Agregar producto</button>
+          <button id="btnAddProducto" class="primary">Agregar fila manual</button>
+        </div>
+
         <ul id="pd_items_list" style="margin-top:10px"></ul>
 
         <div style="display:flex;gap:8px;margin-top:12px">
           <button id="btnAddPedido" class="primary">Guardar Pedido</button>
           <button id="btnExportPedidoCSV" class="primary">Exportar CSV</button>
           <button id="btnExportPedidoIMG" class="primary">Exportar Imagen</button>
+          <div class="small" id="pedidoModoBadge" style="align-self:center"></div>
         </div>
       </div>
 
@@ -262,7 +276,7 @@ button.primary{background:var(--accent);color:#fff;padding:8px 12px;border:0;bor
 </div>
 
 <!-- LOGIN modal (required) -->
-<div id="loginModal" class="modal">
+<div id="loginModal" class="modal hidden">
   <div class="card">
     <h3>Iniciar sesión</h3>
     <label>Usuario</label><input id="login_user">
@@ -299,8 +313,31 @@ document.addEventListener('DOMContentLoaded',function(){
 
   function registrarAccion(accion,detalle){ const rec={fecha:new Date().toISOString(),usuario: state.currentUser?state.currentUser.username:'-',accion,detalle}; state.audit.unshift(rec); save(); renderAudit(); }
 
+  // --- NUEVAS VARIABLES GLOBALES PARA PEDIDOS ---
+  // modoPedido: 'crear' | 'editar' | 'duplicar'
+  let modoPedido = 'crear';
+  let pedidoEditandoId = null; // id (Date.now) del pedido cuando estamos editando
+  let currentPedidoItems = [];  // items mostrados en el formulario (editable)
+  // PREFIJO personalizable
+  const PREFIJO_CUSTOM = "PED";
+
+  // Consecutivo con año y reinicio anual
+  function obtenerConsecutivoPedidoPorAnio(){
+    const anioActual = new Date().getFullYear().toString();
+    const key = 'consecutivo_pedido';
+    const data = JSON.parse(localStorage.getItem(key) || '{}');
+    let numero = 0;
+    if(!data.anio || data.anio !== anioActual){
+      numero = 1;
+    } else {
+      numero = parseInt(data.numero || 0) + 1;
+    }
+    localStorage.setItem(key, JSON.stringify({ anio: anioActual, numero: numero }));
+    return `${PREFIJO_CUSTOM}-${anioActual}-${String(numero).padStart(4,'0')}`;
+  }
+
   // UI helpers
-  function showSection(id){ document.querySelectorAll('main section').forEach(s=>s.classList.add('hidden')); const el = $(id); if(el) el.classList.remove('hidden'); document.querySelectorAll('#sidebar button').forEach(b=>b.classList.remove('active')); const btn=document.querySelector('#sidebar button[data-sec="'+id+'"]'); if(btn) btn.classList.add('active'); }
+  function showSection(id){ document.querySelectorAll('main section').forEach(s=>s.classList.add('hidden')); const el = $(id); if(el) el.classList.remove('hidden'); document.querySelectorAll('#sidebar button').forEach(b=>b.classList.remove('active')); const btn=document.querySelector('#sidebar button[data-sec="'+id+'"]'); if(btn) btn.classList.add('active'); window.scrollTo(0,0); }
   document.querySelectorAll('#sidebar button').forEach(b=> b.addEventListener('click', ()=> { showSection(b.dataset.sec); document.getElementById('sidebar').classList.remove('open'); }));
   $('btnMenu').addEventListener('click', ()=> document.getElementById('sidebar').classList.toggle('open'));
 
@@ -334,7 +371,6 @@ document.addEventListener('DOMContentLoaded',function(){
 
   // Fillers and renderers
   function fillFundSelects(){ const sel = $('selFund'); if(sel){ sel.innerHTML=''; state.foundations.forEach((f,i)=> sel.appendChild(new Option(f.name+' ('+f.nit+')', i))); } const pf = $('pd_fund'); if(pf){ pf.innerHTML=''; state.foundations.forEach((f,i)=> pf.appendChild(new Option(f.name, i))); fillPedidoPoints(); } }
-
   function fillPedidoPoints(){ const sel=$('pd_point'); if(!sel) return; sel.innerHTML=''; const fi=Number($('pd_fund').value||0); const f= state.foundations[fi]; if(f && Array.isArray(f.points)){ f.points.forEach((p,i)=> sel.appendChild(new Option(p.barrio+' ('+p.localidad+' - '+p.ciudad+')', i))); } }
   function fillItemSelect(){ const sel=$('pd_item_sel'); if(!sel) return; sel.innerHTML=''; state.items.forEach((it,i)=> sel.appendChild(new Option(it.name+' - $'+it.price, i))); }
   function fillPackSelect(){ const sel=$('pd_pack_sel'); if(!sel) return; sel.innerHTML=''; sel.appendChild(new Option('','')); state.packs.forEach(p=> sel.appendChild(new Option(p,p))); }
@@ -342,27 +378,54 @@ document.addEventListener('DOMContentLoaded',function(){
 
   function renderFund(){ const box=$('fundList'); if(!box) return; box.innerHTML=''; state.foundations.forEach((f,idx)=>{ const d=document.createElement('div'); d.className='card'; d.style.marginBottom='8px'; let html = '<strong>'+f.name+'</strong><div class="small">NIT: '+f.nit+'</div>'; if(Array.isArray(f.points) && f.points.length){ html += '<div style="margin-top:8px">'; f.points.forEach((p)=>{ html += '<div class="small">'+p.barrio+' — '+p.localidad+' — '+p.ciudad+' — '+(p.encargada||'')+'</div>'; }); html += '</div>'; } else { html += '<div class="small">Sin puntos</div>'; } d.innerHTML = html; box.appendChild(d); }); }
 
-  function renderItems(){ const tbody = $('itemsTable').querySelector('tbody'); tbody.innerHTML=''; state.items.forEach((it,i)=>{ const tr=document.createElement('tr'); tr.innerHTML = '<td>'+it.name+'</td><td>'+(it.desc||'')+'</td><td>$'+(it.price||0)+'</td><td><button data-i="'+i+'" class="delItem">Eliminar</button></td>'; tbody.appendChild(tr); }); document.querySelectorAll('.delItem').forEach(btn=> btn.addEventListener('click', function(){ if(!state.currentUser || state.currentUser.role!=='admin'){ return alert('Solo admin puede eliminar'); } const idx=Number(this.dataset.i); state.items.splice(idx,1); save(); renderItems(); registrarAccion('eliminar_item',{index:idx}); })); }
+  function renderItems(){ const tbody = $('itemsTable').querySelector('tbody'); tbody.innerHTML=''; state.items.forEach((it,i)=>{ const tr=document.createElement('tr'); tr.innerHTML = '<td>'+it.ref+'</td><td>'+it.name+'</td><td>'+(it.desc||'')+'</td><td>$'+(it.price||0)+'</td><td><button data-i="'+i+'" class="delItem">Eliminar</button></td>'; tbody.appendChild(tr); }); document.querySelectorAll('.delItem').forEach(btn=> btn.addEventListener('click', function(){ if(!state.currentUser || state.currentUser.role!=='admin'){ return alert('Solo admin puede eliminar'); } const idx=Number(this.dataset.i); state.items.splice(idx,1); save(); renderItems(); registrarAccion('eliminar_item',{index:idx}); })); }
 
   function renderPacks(){ const ul=$('packList'); if(!ul) return; ul.innerHTML=''; state.packs.forEach((p,i)=>{ const li=document.createElement('li'); li.textContent = p + ' '; const del=document.createElement('button'); del.textContent='Eliminar'; del.style.marginLeft='8px'; del.addEventListener('click', ()=>{ if(!state.currentUser || state.currentUser.role!=='admin') return alert('Solo admin'); state.packs.splice(i,1); save(); renderPacks(); }); li.appendChild(del); ul.appendChild(li); }); }
 
   function renderDrivers(){ const ul=$('driversList'); if(!ul) return; ul.innerHTML=''; state.drivers.forEach((d,i)=>{ const li=document.createElement('li'); li.textContent = d.name + ' — ' + (d.document||''); ul.appendChild(li); }); }
   function renderPlates(){ const ul=$('platesList'); if(!ul) return; ul.innerHTML=''; state.plates.forEach((p,i)=>{ const li=document.createElement('li'); li.textContent = p.plate + ' ('+(p.type||'')+')'; ul.appendChild(li); }); }
 
-  function renderPedidos(){ const ul=$('pedidosList'); if(!ul) return; ul.innerHTML=''; state.pedidos.forEach((p,idx)=>{ const li=document.createElement('li'); li.style.marginBottom='8px'; const created = new Date(p.createdAt).toLocaleString(); li.innerHTML = '<strong>'+p.id+'</strong> — '+p.foundation+' — $'+(p.total||0)+'<div class="small">'+created+'</div><div class="small">Llegada: '+(p.horaLlegada||'—')+' | Salida: '+(p.horaSalida||'—')+' | Conductor: '+(p.driver?.name||'—')+'</div>'; 
-    const btnH=document.createElement('button'); btnH.textContent='Registrar Horas'; btnH.className='primary'; btnH.style.marginTop='6px'; btnH.addEventListener('click', ()=>{ const hL=prompt('Hora de llegada (HH:MM)', p.horaLlegada||''); if(hL===null) return; const hS=prompt('Hora de salida (HH:MM)', p.horaSalida||''); if(hS===null) return; p.horaLlegada=hL; p.horaSalida=hS; save(); renderPedidos(); registrarAccion('registrar_horas',{id:p.id,hL,hS}); });
-    const btnC=document.createElement('button'); btnC.textContent='Copiar'; btnC.className='primary'; btnC.style.marginLeft='8px'; btnC.addEventListener('click', ()=>{ const nit = prompt('NIT de la nueva fundación'); if(!nit) return; const f = state.foundations.find(x=>x.nit===nit); if(!f) return alert('NIT no registrado'); const newPedido = JSON.parse(JSON.stringify(p)); newPedido.id = 'PED-'+Date.now(); newPedido.foundation = f.name; newPedido.foundationNIT = f.nit; state.pedidos.unshift(newPedido); save(); renderPedidos(); registrarAccion('copiar_pedido',{base:p.id,new:newPedido.id}); alert('Pedido copiado: '+newPedido.id); });
+  function refreshPdItems(){ const ul=$('pd_items_list'); if(!ul) return; ul.innerHTML=''; currentPedidoItems.forEach((it,idx)=>{ const li=document.createElement('li'); li.style.marginBottom='6px'; // mostrar campos editables en lista
+    li.innerHTML = `<div style="display:flex;gap:8px;align-items:center">
+      <input class="edit_codigo" placeholder="Código" value="${it.codigo||''}" style="width:110px" />
+      <input class="edit_nombre" placeholder="Nombre" value="${it.name||''}" style="flex:1" />
+      <input class="edit_qty" type="number" min="1" value="${it.qty||1}" style="width:80px" />
+      <input class="edit_kgs" type="number" min="0" value="${it.kgs||0}" style="width:80px" />
+      <input class="edit_price" type="number" min="0" value="${it.price||0}" style="width:100px" />
+      <button class="eliminar_item small">Eliminar</button>
+    </div>`; 
+    // botones
+    const btnDel = li.querySelector('.eliminar_item');
+    btnDel.addEventListener('click', ()=>{ currentPedidoItems.splice(idx,1); refreshPdItems(); });
+    // bind inputs
+    li.querySelector('.edit_codigo').addEventListener('input', (e)=> currentPedidoItems[idx].codigo = e.target.value);
+    li.querySelector('.edit_nombre').addEventListener('input', (e)=> currentPedidoItems[idx].name = e.target.value);
+    li.querySelector('.edit_qty').addEventListener('input', (e)=> currentPedidoItems[idx].qty = Number(e.target.value) || 1);
+    li.querySelector('.edit_kgs').addEventListener('input', (e)=> currentPedidoItems[idx].kgs = Number(e.target.value) || 0);
+    li.querySelector('.edit_price').addEventListener('input', (e)=> currentPedidoItems[idx].price = Number(e.target.value) || 0);
+    ul.appendChild(li);
+  }); }
 
-    const btnE=document.createElement('button'); btnE.textContent='Exportar PNG/PDF'; btnE.className='primary'; btnE.style.marginLeft='8px'; btnE.addEventListener('click', ()=>{ exportPedidoAsImageAndPDF(p); });
+  function renderPedidos(){ const ul=$('pedidosList'); if(!ul) return; ul.innerHTML=''; const q=$('searchPedidos').value.trim().toLowerCase(); state.pedidos.forEach((p,idx)=>{ if(q && !(p.id+''+p.numero+''+p.foundation+''+(p.foundationNIT||'')).toLowerCase().includes(q)) return; const li=document.createElement('li'); li.style.marginBottom='8px'; const created = new Date(p.createdAt).toLocaleString(); li.innerHTML = '<div style=\"display:flex;justify-content:space-between;align-items:center\"><div><strong>'+ (p.numero || '') + ' — ' + (p.id) + '</strong> — '+p.foundation+' — $'+(p.total||0) + '</div><div class=\"small\">'+created+'</div></div>'; const info = document.createElement('div'); info.className='small'; info.style.marginTop='6px'; info.innerHTML = 'Llegada: '+(p.horaLlegada||'—')+' | Salida: '+(p.horaSalida||'—')+' | Conductor: '+(p.driver?.name||'—'); li.appendChild(info);
 
-    li.appendChild(btnH); li.appendChild(btnC); li.appendChild(btnE); ul.appendChild(li);
+    const row = document.createElement('div'); row.className='actions-row'; row.style.marginTop='8px';
+
+    const btnEdit = document.createElement('button'); btnEdit.textContent='Editar'; btnEdit.className='primary'; btnEdit.addEventListener('click', ()=>{ abrirEditarPedido(p.id); });
+    const btnDup = document.createElement('button'); btnDup.textContent='Duplicar'; btnDup.className='primary'; btnDup.addEventListener('click', ()=>{ abrirDuplicarPedido(p.id); });
+    const btnDel = document.createElement('button'); btnDel.textContent='Eliminar'; btnDel.className='primary'; btnDel.addEventListener('click', ()=>{ if(!confirm('Eliminar pedido?')) return; state.pedidos = state.pedidos.filter(x=> x.id !== p.id); save(); renderPedidos(); registrarAccion('eliminar_pedido',{id:p.id}); });
+    const btnExport = document.createElement('button'); btnExport.textContent='Exportar'; btnExport.className='primary'; btnExport.addEventListener('click', ()=> exportPedidoAsImageAndPDF(p));
+
+    row.appendChild(btnEdit); row.appendChild(btnDup); row.appendChild(btnDel); row.appendChild(btnExport);
+    li.appendChild(row);
+
+    ul.appendChild(li);
   }); }
 
   // Build export (Option B): generate image/pdf from pedido data without visible template
   function exportPedidoAsImageAndPDF(pedido){
     // Create offscreen container
     const wrap = document.createElement('div');
-    wrap.style.width = '1123px'; // A4 landscape px approx at 96dpi (11.69in*96)
+    wrap.style.width = '1123px';
     wrap.style.minHeight = '794px';
     wrap.style.background = '#fff';
     wrap.style.padding = '28px';
@@ -371,9 +434,9 @@ document.addEventListener('DOMContentLoaded',function(){
     wrap.style.color = '#0f172a';
 
     const header = document.createElement('div'); header.style.display='flex'; header.style.justifyContent='space-between'; header.style.alignItems='center';
-    const left = document.createElement('div'); left.innerHTML = '<h2 style="margin:0">Pedido '+pedido.id+'</h2><div class="small">Creado: '+new Date(pedido.createdAt).toLocaleString()+'</div>';
-    const right = document.createElement('div'); right.innerHTML = '<img src="/mnt/data/5b47aa95-e2d3-4254-b4bd-700f8e01c259.png" style="height:64px;object-fit:contain">';
-    header.appendChild(left); header.appendChild(right); wrap.appendChild(header);
+    const left = document.createElement('div'); left.innerHTML = '<h2 style="margin:0">Pedido '+pedido.numero+'</h2><div class="small">Creado: '+new Date(pedido.createdAt).toLocaleString()+'</div>';
+    header.appendChild(left);
+    wrap.appendChild(header);
 
     const info = document.createElement('div'); info.style.display='grid'; info.style.gridTemplateColumns='1fr 1fr'; info.style.gap='8px'; info.style.marginTop='12px';
     info.innerHTML = '<div><b>Fundación:</b> '+(pedido.foundation||'')+'<br><b>NIT:</b> '+(pedido.foundationNIT||'')+'</div>'+
@@ -388,7 +451,7 @@ document.addEventListener('DOMContentLoaded',function(){
     const thead = document.createElement('thead'); thead.innerHTML = '<tr><th style="border:1px solid #ddd;padding:6px">Item</th><th style="border:1px solid #ddd;padding:6px">Embalaje</th><th style="border:1px solid #ddd;padding:6px">Cantidad</th><th style="border:1px solid #ddd;padding:6px">Kilos</th><th style="border:1px solid #ddd;padding:6px">Precio</th></tr>';
     tbl.appendChild(thead);
     const tb = document.createElement('tbody');
-    pedido.items.forEach(it=>{
+    (pedido.items||[]).forEach(it=>{
       const tr = document.createElement('tr');
       tr.innerHTML = '<td style="border:1px solid #ddd;padding:6px">'+(it.name||'')+'</td>'+
                      '<td style="border:1px solid #ddd;padding:6px">'+(it.pack||'')+'</td>'+
@@ -400,7 +463,7 @@ document.addEventListener('DOMContentLoaded',function(){
     tbl.appendChild(tb);
     wrap.appendChild(tbl);
 
-    const sumDiv = document.createElement('div'); sumDiv.style.marginTop='12px'; sumDiv.style.textAlign='right'; const subtotal = pedido.items.reduce((s,it)=>s + ((it.price||0)*(it.qty||1)),0); sumDiv.innerHTML = '<div><b>Subtotal:</b> $'+subtotal+'</div><div><b>Peaje:</b> $'+(pedido.peaje||0)+'</div><div><b>Transporte:</b> $'+(pedido.trans||0)+'</div><div style="font-size:18px;margin-top:6px"><b>Total:</b> $'+(pedido.total||0)+'</div>';
+    const sumDiv = document.createElement('div'); sumDiv.style.marginTop='12px'; sumDiv.style.textAlign='right'; const subtotal = (pedido.items||[]).reduce((s,it)=>s + ((it.price||0)*(it.qty||1)),0); sumDiv.innerHTML = '<div><b>Subtotal:</b> $'+subtotal+'</div><div><b>Peaje:</b> $'+(pedido.peaje||0)+'</div><div><b>Transporte:</b> $'+(pedido.trans||0)+'</div><div style="font-size:18px;margin-top:6px"><b>Total:</b> $'+(pedido.total||0)+'</div>';
     wrap.appendChild(sumDiv);
 
     // Render with html2canvas at higher scale
@@ -409,9 +472,9 @@ document.addEventListener('DOMContentLoaded',function(){
 
     html2canvas(wrap, {scale:2}).then(canvas=>{
       // PNG download
-      const link = document.createElement('a'); link.download = pedido.id + '.png'; link.href = canvas.toDataURL('image/png'); link.click();
+      const link = document.createElement('a'); link.download = (pedido.numero || pedido.id) + '.png'; link.href = canvas.toDataURL('image/png'); link.click();
       // Open print window for PDF option
-      const dataUrl = canvas.toDataURL('image/png'); const win = window.open(''); if(win){ win.document.write('<html><head><title>'+pedido.id+'</title></head><body style="margin:0"><img src="'+dataUrl+'" style="width:100%"></body></html>'); win.document.close(); }
+      const dataUrl = canvas.toDataURL('image/png'); const win = window.open(''); if(win){ win.document.write('<html><head><title>'+pedido.numero+'</title></head><body style="margin:0"><img src="'+dataUrl+'" style="width:100%"></body></html>'); win.document.close(); }
       // cleanup
       setTimeout(()=>{ document.body.removeChild(wrap); },500);
       registrarAccion('export_pedido_image',{id:pedido.id});
@@ -419,8 +482,8 @@ document.addEventListener('DOMContentLoaded',function(){
   }
 
   function renderAudit(){ const box=$('auditList'); if(!box) return; box.innerHTML=''; const uf=$('auditUserFilter').value.trim().toLowerCase(); const df=$('auditDateFilter').value; state.audit.forEach(a=>{ const dstr=new Date(a.fecha).toISOString().slice(0,10); if(uf && !a.usuario.toLowerCase().includes(uf)) return; if(df && dstr!==df) return; const d=document.createElement('div'); d.style.marginBottom='8px'; d.innerHTML='<b>['+new Date(a.fecha).toLocaleString()+'] '+a.usuario+'</b> — '+a.accion+' <div class="small">'+JSON.stringify(a.detalle)+'</div>'; box.appendChild(d); }); }
-$('auditUserFilter').addEventListener('input',renderAudit);
-$('auditDateFilter').addEventListener('change',renderAudit);
+  $('auditUserFilter').addEventListener('input',renderAudit);
+  $('auditDateFilter').addEventListener('change',renderAudit);
 
   // Fillers
   fillFundSelects(); fillItemSelect(); fillPackSelect(); fillDriverPlate(); renderFund(); renderItems(); renderPacks(); renderDrivers(); renderPlates(); renderPedidos(); renderAudit();
@@ -482,7 +545,7 @@ $('auditDateFilter').addEventListener('change',renderAudit);
 
   $('btnPointCreate').addEventListener('click', ()=>{ if(!state.currentUser) return alert('Inicie sesión'); const fi=Number($('selFund').value); const f = state.foundations[fi]; if(!f) return alert('Seleccione fundación'); const p={barrio:$('p_barrio').value.trim(),localidad:$('p_localidad').value.trim(),ciudad:$('p_ciudad').value.trim(),tel1:$('p_tel1').value.trim(),tel2:$('p_tel2').value.trim(),encargada:$('p_encargada').value.trim()}; f.points = f.points || []; f.points.push(p); save(); renderFund(); fillFundSelects(); registrarAccion('crear_punto',{fund:f.name,barrio:p.barrio}); $('p_barrio').value=''; });
 
-  $('btnCreateItem').addEventListener('click', ()=>{ if(!state.currentUser) return alert('Inicie sesión'); const name=$('item_name').value.trim(); if(!name) return alert('Nombre requerido'); const desc=$('item_desc').value.trim(); const price=Number($('item_price').value)||0; state.items.push({name,desc,price}); save(); renderItems(); fillItemSelect(); registrarAccion('crear_item',{name}); $('item_name').value=''; $('item_desc').value=''; $('item_price').value=''; });
+  $('btnCreateItem').addEventListener('click', ()=>{ if(!state.currentUser) return alert('Inicie sesión'); const ref=$('item_ref').value.trim(); const name=$('item_name').value.trim(); if(!name) return alert('Nombre requerido'); const desc=$('item_desc').value.trim(); const price=Number($('item_price').value)||0; state.items.push({ref,name,desc,price}); save(); renderItems(); fillItemSelect(); registrarAccion('crear_item',{name}); $('item_ref').value=''; $('item_name').value=''; $('item_desc').value=''; $('item_price').value=''; });
 
   $('btnAddPack').addEventListener('click', ()=>{ if(!state.currentUser) return alert('Inicie sesión'); const v=$('new_pack').value.trim(); if(!v) return alert('Ingrese nombre'); state.packs.push(v); save(); renderPacks(); $('new_pack').value=''; registrarAccion('crear_embalaje',{pack:v}); });
 
@@ -490,19 +553,106 @@ $('auditDateFilter').addEventListener('change',renderAudit);
 
   $('btnAddPlate').addEventListener('click', ()=>{ if(!state.currentUser) return alert('Inicie sesión'); const p={plate:$('pl_plate').value.trim(),type:$('pl_type').value.trim()}; if(!p.plate) return alert('Placa requerida'); state.plates.push(p); save(); renderPlates(); fillDriverPlate(); registrarAccion('crear_placa',p); $('pl_plate').value=''; $('pl_type').value=''; });
 
-  // Pedido flow
-  let currentPedidoItems = [];
-  function refreshPdItems(){ const ul=$('pd_items_list'); if(!ul) return; ul.innerHTML=''; currentPedidoItems.forEach((it,idx)=>{ const li=document.createElement('li'); li.style.marginBottom='6px'; li.textContent = it.name + ' x' + (it.qty||1) + ' — ' + (it.kgs? it.kgs+'kg':'' ) + ' — $'+(it.price||0); const del=document.createElement('button'); del.textContent='Eliminar'; del.style.marginLeft='8px'; del.addEventListener('click', ()=>{ currentPedidoItems.splice(idx,1); refreshPdItems(); }); li.appendChild(del); ul.appendChild(li); }); }
+  // Pedido flow - agregar item desde selects al array editable
+  $('pd_add_item').addEventListener('click', ()=>{ if(!state.currentUser) return alert('Inicie sesión'); const idx = Number($('pd_item_sel').value); if(isNaN(idx) || !state.items[idx]) return alert('Seleccione item'); const pack = $('pd_pack_sel').value || ''; const packQty = Number($('pd_pack_qty').value)||0; const kgs = Number($('pd_kilos').value); if(!kgs) return alert('Kilos obligatorios'); const it = state.items[idx]; const qty = packQty || 1; currentPedidoItems.push({codigo: it.ref || '', name:it.name, price:it.price, qty, pack, kgs}); refreshPdItems(); });
 
-  $('pd_add_item').addEventListener('click', ()=>{ if(!state.currentUser) return alert('Inicie sesión'); const idx = Number($('pd_item_sel').value); if(isNaN(idx) || !state.items[idx]) return alert('Seleccione item'); const pack = $('pd_pack_sel').value || ''; const packQty = Number($('pd_pack_qty').value)||0; const kgs = Number($('pd_kilos').value); if(!kgs) return alert('Kilos obligatorios'); const it = state.items[idx]; const qty = packQty || 1; currentPedidoItems.push({name:it.name,price:it.price,qty,pack,kgs}); refreshPdItems(); });
+  // agregar fila manual
+  $('btnAddProducto').addEventListener('click', ()=>{ if(!state.currentUser) return alert('Inicie sesión'); currentPedidoItems.push({codigo:'',name:'',price:0,qty:1,pack:'',kgs:0}); refreshPdItems(); });
 
   $('pd_fund').addEventListener('change', ()=> fillPedidoPoints());
 
-  $('btnAddPedido').addEventListener('click', ()=>{ if(!state.currentUser) return alert('Inicie sesión'); const fi=Number($('pd_fund').value); const f=state.foundations[fi]; if(!f) return alert('Seleccione fundación'); const pi=Number($('pd_point').value); const point=(f.points||[])[pi]; if(!point) return alert('Seleccione punto'); if(currentPedidoItems.length===0) return alert('Agregue items'); const peaje=Number($('pd_peaje').value)||0; const trans=Number($('pd_trans').value)||0; const subtotal=currentPedidoItems.reduce((s,it)=>s+(it.price||0)*(it.qty||1),0); const total=subtotal+peaje+trans; const pedido = { id:'PED-'+Date.now(), foundation:f.name, foundationNIT:f.nit, point, items: currentPedidoItems.slice(), peaje, trans, total, driver:null, createdAt:new Date().toISOString() }; state.pedidos.unshift(pedido); save(); registrarAccion('crear_pedido',{id:pedido.id,foundation:f.name,total}); currentPedidoItems=[]; refreshPdItems(); renderPedidos(); alert('Pedido creado: '+pedido.id); });
+  // Autocompletar por NIT en formulario pedido
+  $('pd_nit').addEventListener('input', function(){
+    const nitIngresado = this.value.trim();
+    $('pd_fund_info').innerText = '';
+    if(!nitIngresado) {
+      // limpiar selects
+      $('pd_fund').value = '';
+      fillPedidoPoints();
+      return;
+    }
+    const f = state.foundations.find(ff => String(ff.nit) === nitIngresado);
+    if(f){
+      // mostrar info
+      $('pd_fund_info').innerText = f.name;
+      // seleccionar en pd_fund
+      const idx = state.foundations.findIndex(x=> x.nit === f.nit);
+      if(idx>=0){
+        $('pd_fund').value = idx;
+        fillPedidoPoints();
+      }
+    } else {
+      $('pd_fund_info').innerText = 'NIT no registrado';
+    }
+  });
 
-  $('btnExportPedidoCSV').addEventListener('click', ()=>{ const rows=[['id','fundacion','punto','item','pack','qty','kgs','precio','peaje','trans','total','fecha']]; state.pedidos.forEach(p=> p.items.forEach(it=> rows.push([p.id,p.foundation,p.point?.barrio||'',it.name,it.pack,it.qty,it.kgs,it.price,p.peaje,p.trans,p.total,p.createdAt]))); const csv = rows.map(r=> r.map(c=> '"'+(''+c).replace(/"/g,'""')+'"').join(',')).join('\n'); const blob=new Blob([csv],{type:'text/csv'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='pedidos.csv'; a.click(); URL.revokeObjectURL(url); });
+  // Guardar nuevo pedido / editar / duplicar
+  $('btnAddPedido').addEventListener('click', ()=>{ if(!state.currentUser) return alert('Inicie sesión');
 
-  // Export Pedido Imagen
+    const nitVal = $('pd_nit').value.trim();
+    const fundIndex = Number($('pd_fund').value);
+    const f = state.foundations[fundIndex];
+    const pointIndex = Number($('pd_point').value);
+    const point = f ? (f.points || [])[pointIndex] : null;
+    if(!f) return alert('Seleccione fundación válida');
+    if(!point) return alert('Seleccione punto válido');
+    if(currentPedidoItems.length===0) return alert('Agregue items');
+
+    const peaje=Number($('pd_peaje').value)||0;
+    const trans=Number($('pd_trans').value)||0;
+    const subtotal=currentPedidoItems.reduce((s,it)=>s+(it.price||0)*(it.qty||1),0);
+    const total=subtotal+peaje+trans;
+
+    if(modoPedido === 'crear' || modoPedido === 'duplicar'){
+      // crear nuevo pedido
+      const nuevo = {
+        id: Date.now(),
+        numero: obtenerConsecutivoPedidoPorAnio(),
+        foundation: f.name,
+        foundationNIT: f.nit,
+        point: point,
+        items: JSON.parse(JSON.stringify(currentPedidoItems)),
+        peaje, trans, subtotal, total,
+        driver: null,
+        createdAt: new Date().toISOString()
+      };
+      state.pedidos.unshift(nuevo);
+      save();
+      registrarAccion('crear_pedido',{id:nuevo.id,foundation:nuevo.foundation,total:nuevo.total});
+      alert('Pedido creado: '+nuevo.numero);
+    } else if(modoPedido === 'editar'){
+      // editar pedido existente: conservar numero e id
+      const pedidos = state.pedidos.map(p=>{
+        if(p.id === pedidoEditandoId){
+          return {
+            ...p,
+            foundation: f.name,
+            foundationNIT: f.nit,
+            point: point,
+            items: JSON.parse(JSON.stringify(currentPedidoItems)),
+            peaje, trans, subtotal, total
+          };
+        }
+        return p;
+      });
+      state.pedidos = pedidos;
+      save();
+      registrarAccion('editar_pedido',{id:pedidoEditandoId});
+      alert('Pedido modificado.');
+    }
+
+    // Limpiar formulario y volver a historial
+    modoPedido = 'crear'; pedidoEditandoId = null;
+    currentPedidoItems = [];
+    refreshPdItems();
+    $('pd_nit').value=''; $('pd_peaje').value=''; $('pd_trans').value='';
+    $('formTitle').innerText = 'Crear Pedido';
+    $('pedidoModoBadge').innerText = '';
+    renderPedidos();
+    showSection('recibos'); // mantén en pedidos (historial visible)
+  });
+
+  // Export Pedido Imagen (lista completa)
   document.getElementById('btnExportPedidoIMG').addEventListener('click', ()=>{
     const node = document.getElementById('pedidosList');
     html2canvas(node).then(canvas=>{
@@ -521,8 +671,60 @@ $('auditDateFilter').addEventListener('change',renderAudit);
   // Render everything helper
   function renderAll(){ fillFundSelects(); fillItemSelect(); fillPackSelect(); fillDriverPlate(); renderFund(); renderItems(); renderPacks(); renderDrivers(); renderPlates(); renderPedidos(); renderAudit(); renderAdminUsers(); }
 
+  // abrir editar pedido
+  function abrirEditarPedido(id){
+    const pedido = state.pedidos.find(p=> p.id === id);
+    if(!pedido) return alert('Pedido no encontrado');
+    modoPedido = 'editar';
+    pedidoEditandoId = id;
+    // cargar form
+    $('formTitle').innerText = 'Editar Pedido — ' + (pedido.numero || '');
+    $('pedidoModoBadge').innerText = 'Modo: editar';
+    $('pd_nit').value = pedido.foundationNIT || '';
+    // select fundacion
+    const fIndex = state.foundations.findIndex(x=> x.nit === pedido.foundationNIT);
+    if(fIndex>=0){ $('pd_fund').value = fIndex; fillPedidoPoints(); }
+    // select point
+    if(pedido.point){
+      const points = (state.foundations[fIndex] && state.foundations[fIndex].points) || [];
+      const pIdx = points.findIndex(pp => pp.barrio === pedido.point.barrio && pp.ciudad === pedido.point.ciudad);
+      if(pIdx>=0) $('pd_point').value = pIdx;
+    }
+    currentPedidoItems = JSON.parse(JSON.stringify(pedido.items || []));
+    refreshPdItems();
+    showSection('recibos');
+  }
+
+  // abrir duplicar pedido (no guarda)
+  function abrirDuplicarPedido(id){
+    const pedido = state.pedidos.find(p=> p.id === id);
+    if(!pedido) return alert('Pedido no encontrado');
+    modoPedido = 'duplicar';
+    pedidoEditandoId = null;
+    $('formTitle').innerText = 'Duplicar Pedido — ' + (pedido.numero || '');
+    $('pedidoModoBadge').innerText = 'Modo: duplicar (no guardado)';
+    $('pd_nit').value = pedido.foundationNIT || '';
+    const fIndex = state.foundations.findIndex(x=> x.nit === pedido.foundationNIT);
+    if(fIndex>=0){ $('pd_fund').value = fIndex; fillPedidoPoints(); }
+    if(pedido.point){
+      const points = (state.foundations[fIndex] && state.foundations[fIndex].points) || [];
+      const pIdx = points.findIndex(pp => pp.barrio === pedido.point.barrio && pp.ciudad === pedido.point.ciudad);
+      if(pIdx>=0) $('pd_point').value = pIdx;
+    }
+    // copy items to form (editable)
+    currentPedidoItems = JSON.parse(JSON.stringify(pedido.items || []));
+    refreshPdItems();
+    showSection('recibos');
+  }
+
   // initial render (if logged)
   if(state.currentUser){ setCurrentUser(state.currentUser); } else { openLogin(); }
+
+  // buscar pedidos textbox
+  $('searchPedidos').addEventListener('input', renderPedidos);
+
+  // CSV export (todos)
+  $('btnExportPedidoCSV').addEventListener('click', ()=>{ const rows=[['id','numero','fundacion','nit','punto','item','pack','qty','kgs','precio','peaje','trans','total','fecha']]; state.pedidos.forEach(p=> p.items.forEach(it=> rows.push([p.id,p.numero,p.foundation,p.foundationNIT,p.point?.barrio||'',it.name,it.pack,it.qty,it.kgs,it.price,p.peaje,p.trans,p.total,p.createdAt]))); const csv = rows.map(r=> r.map(c=> '"'+(''+c).replace(/"/g,'""')+'"').join(',')).join('\n'); const blob=new Blob([csv],{type:'text/csv'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='pedidos.csv'; a.click(); URL.revokeObjectURL(url); });
 
 });
 </script>
