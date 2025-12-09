@@ -73,8 +73,16 @@ button.primary{background:var(--accent);color:#fff;padding:8px 12px;border:0;bor
       </div>
 
       <div class="card">
-        <h3>Añadir Punto de Envío</h3>
-        <label>Fundación</label><select id="selFund"></select>
+       <h3>Añadir Punto de Envío</h3>
+
+        <label>NIT Fundación</label>
+        <input id="p_nit_lookup" placeholder="Ingrese NIT">
+
+        <div id="p_nit_info" class="small" style="margin-top:4px;color:#0a57ff"></div>
+
+        <label>Fundación</label>
+        <select id="selFund"></select>
+
         <label>Barrio</label><input id="p_barrio">
         <label>Localidad</label><input id="p_localidad">
         <label>Ciudad</label><input id="p_ciudad">
