@@ -549,8 +549,19 @@ document.addEventListener('DOMContentLoaded',function(){
   });
 
   // Handlers
-  $('btnFundCreate').addEventListener('click', ()=>{ if(!state.currentUser) return alert('Inicie sesión'); const nit=$('f_nit').value.trim(); const name=$('f_name').value.trim(); if(!nit||!name) return alert('Complete NIT y Nombre'); state.foundations.push({nit,name,points:[]}); save(); fillFundSelects(); renderFund(); registrarAccion('crear_fundacion',{nit,name}); $('f_nit').value=''; $('f_name').value=''; });
-
+  $('btnFundCreate').addEventListener('click', ()=>{ 
+  if(!state.currentUser) return alert('Inicie sesión'); 
+  const nit=$('f_nit').value.trim(); 
+  const name=$('f_name').value.trim(); 
+  if(!nit||!name) return alert('Complete NIT y Nombre'); 
+  state.foundations.push({nit,name,points:[]}); 
+  save(); 
+  fillFundSelects(); 
+  renderFund(); 
+  registrarAccion('crear_fundacion',{nit,name}); 
+  $('f_nit').value=''; 
+  $('f_name').value=''; 
+});
   $('btnPointCreate').addEventListener('click', ()=>{ if(!state.currentUser) return alert('Inicie sesión'); const fi=Number($('selFund').value); const f = state.foundations[fi]; if(!f) return alert('Seleccione fundación'); const p={barrio:$('p_barrio').value.trim(),localidad:$('p_localidad').value.trim(),ciudad:$('p_ciudad').value.trim(),tel1:$('p_tel1').value.trim(),tel2:$('p_tel2').value.trim(),encargada:$('p_encargada').value.trim()}; f.points = f.points || []; f.points.push(p); save(); renderFund(); fillFundSelects(); registrarAccion('crear_punto',{fund:f.name,barrio:p.barrio}); $('p_barrio').value=''; });
 
   $('btnCreateItem').addEventListener('click', ()=>{ if(!state.currentUser) return alert('Inicie sesión'); const ref=$('item_ref').value.trim(); const name=$('item_name').value.trim(); if(!name) return alert('Nombre requerido'); const desc=$('item_desc').value.trim(); const price=Number($('item_price').value)||0; state.items.push({ref,name,desc,price}); save(); renderItems(); fillItemSelect(); registrarAccion('crear_item',{name}); $('item_ref').value=''; $('item_name').value=''; $('item_desc').value=''; $('item_price').value=''; });
